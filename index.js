@@ -2,20 +2,28 @@ const core = require('@actions/core');
 const github = require('@actions/github');
 const asana = require('asana');
 
+function asanaClient(asanaPAT) {
+  return asana.Client.create({
+    defaultHeaders: { "asana-enable": "new-sections,string_ids" },
+    logAsanaChangeWarnings: false,
+  }).useAccessToken(asanaPAT);
+}
+
+async function commentAlreadySent(client, taskId, taskComment) {
+  const stories = await client.tasks.stories(taskId);
+  return stories.data.some(s => s.type === 'comment' && s.text === taskComment);
+}
+
 async function asanaOperations(
-  asanaPAT,
+  client,
   targets,
   taskId,
   taskComment
 ) {
   try {
-    const client = asana.Client.create({
-      defaultHeaders: { 'asana-enable': 'new-sections,string_ids' },
-      logAsanaChangeWarnings: false
-    }).useAccessToken(asanaPAT);
 
     const task = await client.tasks.findById(taskId);
-    
+
     targets.forEach(async target => {
       let targetProject = task.projects.find(project => project.name === target.project);
       if (targetProject) {
@@ -63,10 +71,12 @@ try {
   if (TASK_COMMENT) {
     taskComment = `${TASK_COMMENT} ${PULL_REQUEST.html_url}`;
   }
+  const client = asanaClient(ASANA_PAT);
   while ((parseAsanaURL = REGEX.exec(PULL_REQUEST.body)) !== null) {
     let taskId = parseAsanaURL.groups.task;
     if (taskId) {
-      asanaOperations(ASANA_PAT, targets, taskId, taskComment);
+      const shouldSend = !(await commentAlreadySent(client, taskId, taskComment));
+      if (shouldSend) asanaOperations(client, targets, taskId, taskComment);
     } else {
       core.info(`Invalid Asana task URL after the trigger phrase ${TRIGGER_PHRASE}`);
     }
